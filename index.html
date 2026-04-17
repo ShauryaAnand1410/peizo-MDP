@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PiezoLab — Arduino Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --bg2: #111118;
+  --bg3: #1a1a24;
+  --surface: #16161f;
+  --surface2: #1e1e2a;
+  --border: rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.12);
+  --accent: #00ff88;
+  --accent2: #0099ff;
+  --accent3: #ff6b35;
+  --accent4: #b16cff;
+  --text: #f0f0f8;
+  --text2: #8888aa;
+  --text3: #555570;
+  --mono: 'Space Mono', monospace;
+  --head: 'Syne', sans-serif;
+  --glow: 0 0 20px rgba(0,255,136,0.3);
+  --glow2: 0 0 20px rgba(0,153,255,0.3);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--head);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* SCANLINE OVERLAY */
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.03) 2px,rgba(0,0,0,0.03) 4px);pointer-events:none;z-index:9999}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 2rem;height:56px;background:rgba(10,10,15,0.85);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.nav-logo{font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:0.1em}
+.nav-logo span{color:var(--text3)}
+.nav-status{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--text3)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#ff4444;transition:background 0.3s,box-shadow 0.3s}
+.status-dot.live{background:var(--accent);box-shadow:var(--glow)}
+.nav-tabs{display:flex;gap:0}
+.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:12px;color:var(--text3);cursor:pointer;border:none;background:transparent;letter-spacing:0.05em;text-transform:uppercase;border-bottom:2px solid transparent;transition:all 0.2s}
+.nav-tab:hover{color:var(--text2)}
+.nav-tab.active{color:var(--accent);border-bottom:2px solid var(--accent)}
+
+/* HERO */
+.hero{padding:120px 2rem 60px;text-align:center;position:relative;overflow:hidden}
+.hero-grid{position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:40px 40px;mask-image:radial-gradient(ellipse 80% 60% at 50% 50%,black 40%,transparent 100%)}
+.hero-badge{display:inline-block;font-family:var(--mono);font-size:10px;color:var(--accent);background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);padding:4px 12px;border-radius:2px;letter-spacing:0.15em;margin-bottom:24px}
+.hero h1{font-size:clamp(2.5rem,6vw,5rem);font-weight:800;line-height:1.05;letter-spacing:-0.02em;margin-bottom:16px}
+.hero h1 span{color:var(--accent)}
+.hero-sub{font-family:var(--mono);font-size:13px;color:var(--text2);max-width:480px;margin:0 auto 40px;line-height:1.7}
+.hero-metrics{display:flex;justify-content:center;gap:2px;flex-wrap:wrap;margin-bottom:16px}
+.hm{background:var(--surface);border:1px solid var(--border2);padding:16px 24px;min-width:130px;text-align:center}
+.hm:first-child{border-radius:8px 0 0 8px}
+.hm:last-child{border-radius:0 8px 8px 0}
+.hm-val{font-size:1.6rem;font-weight:800;color:var(--accent);font-family:var(--mono)}
+.hm-label{font-size:10px;color:var(--text3);letter-spacing:0.1em;text-transform:uppercase;margin-top:4px}
+
+/* MAIN PANELS */
+.panels{padding:0 2rem 4rem;max-width:1400px;margin:0 auto}
+.panel{display:none}
+.panel.active{display:block}
+
+/* LIVE PANEL */
+.live-grid{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-bottom:16px}
+.live-chart-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
+.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.card-title{font-size:11px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3)}
+.card-badge{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:2px}
+.badge-live{background:rgba(0,255,136,0.1);color:var(--accent);border:1px solid rgba(0,255,136,0.2)}
+.badge-off{background:rgba(255,68,68,0.1);color:#ff6666;border:1px solid rgba(255,68,68,0.2)}
+.chart-wrap{position:relative;height:280px}
+
+.side-col{display:flex;flex-direction:column;gap:12px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.stat-label{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:6px}
+.stat-val{font-size:2rem;font-weight:800;font-family:var(--mono);color:var(--text)}
+.stat-unit{font-size:12px;color:var(--text3);margin-left:4px}
+.stat-val.green{color:var(--accent)}
+.stat-val.blue{color:var(--accent2)}
+.stat-val.orange{color:var(--accent3)}
+
+/* LED BAR */
+.led-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.led-row{display:flex;gap:6px;margin-top:10px;align-items:flex-end;height:48px}
+.led-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.led-bar{width:100%;border-radius:3px;transition:height 0.15s,background 0.15s,box-shadow 0.15s;background:var(--bg3)}
+.led-col.on .led-bar{background:var(--accent);box-shadow:0 0 12px rgba(0,255,136,0.5)}
+.led-dot{width:10px;height:10px;border-radius:50%;background:var(--bg3);transition:all 0.15s}
+.led-col.on .led-dot{background:var(--accent);box-shadow:0 0 8px rgba(0,255,136,0.8)}
+.led-num{font-family:var(--mono);font-size:9px;color:var(--text3)}
+
+/* BOTTOM GRID */
+.bottom-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.mini-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+
+/* WAVEFORM */
+.wave-full{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.wave-wrap{position:relative;height:160px}
+
+/* CONNECT PANEL */
+.connect-wrap{max-width:760px;margin:0 auto;padding-top:20px}
+.connect-step{display:flex;gap:20px;margin-bottom:24px;align-items:flex-start}
+.step-num{min-width:36px;height:36px;border-radius:50%;border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;color:var(--accent);flex-shrink:0}
+.step-body h3{font-size:14px;font-weight:600;margin-bottom:6px}
+.step-body p{font-size:13px;color:var(--text2);line-height:1.7}
+code{font-family:var(--mono);font-size:12px;background:var(--bg3);padding:2px 6px;border-radius:3px;color:var(--accent2)}
+pre.code-block{font-family:var(--mono);font-size:12px;background:var(--bg3);padding:16px;border-radius:8px;overflow-x:auto;line-height:1.7;color:var(--text2);border:1px solid var(--border);margin-top:8px}
+pre.code-block .kw{color:var(--accent4)}
+pre.code-block .fn{color:var(--accent2)}
+pre.code-block .str{color:var(--accent)}
+pre.code-block .cm{color:var(--text3)}
+.port-select{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.port-btn{font-family:var(--mono);font-size:12px;padding:8px 16px;border:1px solid var(--border2);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;transition:all 0.2s}
+.port-btn:hover,.port-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(0,255,136,0.05)}
+.connect-btn{font-family:var(--mono);font-size:13px;padding:12px 32px;border:1px solid var(--accent);border-radius:6px;background:rgba(0,255,136,0.08);color:var(--accent);cursor:pointer;transition:all 0.2s;margin-top:16px;letter-spacing:0.08em}
+.connect-btn:hover{background:rgba(0,255,136,0.15);box-shadow:var(--glow)}
+.connect-btn:disabled{opacity:0.4;cursor:default}
+.disconnect-btn{font-family:var(--mono);font-size:13px;padding:12px 32px;border:1px solid #ff4444;border-radius:6px;background:rgba(255,68,68,0.08);color:#ff6666;cursor:pointer;transition:all 0.2s;margin-top:16px;margin-left:10px}
+.log-box{font-family:var(--mono);font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;height:180px;overflow-y:auto;color:var(--text2);line-height:1.8;margin-top:12px}
+.log-line{display:block}.log-line .ts{color:var(--text3)}.log-line .msg{color:var(--accent2)}.log-line.err .msg{color:#ff6666}
+
+/* RESEARCH PANEL */
+.research-wrap{max-width:900px;margin:0 auto;padding-top:12px}
+.r-section{margin-bottom:40px}
+.r-section h2{font-size:1.3rem;font-weight:700;margin-bottom:6px;color:var(--text)}
+.r-section h2 span{color:var(--accent)}
+.r-divider{width:40px;height:2px;background:var(--accent);margin-bottom:20px;opacity:0.5}
+.r-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
+.r-stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.r-stat-val{font-size:1.4rem;font-weight:800;font-family:var(--mono);color:var(--accent2);margin-bottom:4px}
+.r-stat-label{font-size:11px;color:var(--text3);letter-spacing:0.08em;text-transform:uppercase}
+.r-stat-sub{font-size:11px;color:var(--text3);margin-top:4px}
+.r-text{font-size:14px;color:var(--text2);line-height:1.8;margin-bottom:16px}
+.r-text strong{color:var(--text);font-weight:600}
+.formula-box{background:var(--bg3);border:1px solid var(--border2);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:14px 16px;font-family:var(--mono);font-size:12px;color:var(--text2);margin:12px 0;line-height:1.8}
+.tag{display:inline-block;font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:2px;margin-right:6px;margin-bottom:4px}
+.tag-green{background:rgba(0,255,136,0.1);color:var(--accent);border:1px solid rgba(0,255,136,0.2)}
+.tag-blue{background:rgba(0,153,255,0.1);color:var(--accent2);border:1px solid rgba(0,153,255,0.2)}
+.tag-orange{background:rgba(255,107,53,0.1);color:var(--accent3);border:1px solid rgba(255,107,53,0.2)}
+.tag-purple{background:rgba(177,108,255,0.1);color:var(--accent4);border:1px solid rgba(177,108,255,0.2)}
+.app-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.app-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px}
+.app-icon{font-size:20px;margin-bottom:8px}
+.app-name{font-size:13px;font-weight:600;margin-bottom:4px}
+.app-desc{font-size:11px;color:var(--text3);line-height:1.5}
+
+/* SIMULATOR PANEL */
+.sim-wrap{display:grid;grid-template-columns:360px 1fr;gap:16px;margin-bottom:16px}
+.sim-controls{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
+.sim-row{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.sim-label{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text3);min-width:90px}
+.sim-track{flex:1;-webkit-appearance:none;height:4px;border-radius:2px;background:var(--bg3);outline:none;cursor:pointer}
+.sim-track::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 8px rgba(0,255,136,0.5)}
+.sim-val-disp{font-family:var(--mono);font-size:12px;color:var(--accent);min-width:48px;text-align:right}
+.sim-bar-group{margin-bottom:20px}
+.sbg-label{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:6px}
+.sbg-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.sbg-name{font-size:11px;color:var(--text3);min-width:80px}
+.sbg-track{flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.sbg-fill{height:100%;border-radius:3px;transition:width 0.2s}
+.sbg-val{font-family:var(--mono);font-size:11px;min-width:60px;text-align:right}
+.sim-output{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
+.sim-led-display{display:flex;gap:8px;margin:12px 0;justify-content:center}
+.sled{width:32px;height:32px;border-radius:50%;border:1px solid var(--border2);transition:all 0.15s;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;color:var(--text3)}
+.sled.on{background:var(--accent);box-shadow:0 0 16px rgba(0,255,136,0.6);color:#000;border-color:var(--accent)}
+.sim-chart-wrap{position:relative;height:200px;margin-top:12px}
+
+/* DATA LOG */
+.log-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.data-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+.data-table th{text-align:left;padding:8px 12px;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;border-bottom:1px solid var(--border)}
+.data-table td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
+.data-table tr:last-child td{border-bottom:none}
+.data-table td:first-child{color:var(--text3)}
+.data-table td.hi{color:var(--accent)}
+.export-btn{font-family:var(--mono);font-size:11px;padding:7px 16px;border:1px solid var(--border2);border-radius:4px;background:transparent;color:var(--text2);cursor:pointer;transition:all 0.2s;margin-right:8px}
+.export-btn:hover{border-color:var(--accent2);color:var(--accent2)}
+
+/* ARDUINO CODE TAB */
+.arduino-code{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.copy-btn{font-family:var(--mono);font-size:10px;padding:4px 12px;border:1px solid var(--border2);border-radius:3px;background:transparent;color:var(--text3);cursor:pointer;transition:all 0.2s}
+.copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+.copy-btn.copied{color:var(--accent);border-color:var(--accent)}
+
+/* ANIMATIONS */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.anim{animation:fadeIn 0.4s ease forwards}
+.pulsing{animation:pulse 1.5s infinite}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:var(--bg2)}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:2px}
+
+/* RESPONSIVE */
+@media(max-width:900px){
+  .live-grid,.sim-wrap,.bottom-grid{grid-template-columns:1fr}
+  .hero{padding:100px 1rem 40px}
+  .panels{padding:0 1rem 3rem}
+  nav{padding:0 1rem}
+  .nav-tab span{display:none}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">PIEZO<span>/</span>LAB</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchTab('live',this)">Live</button>
+    <button class="nav-tab" onclick="switchTab('simulator',this)">Simulator</button>
+    <button class="nav-tab" onclick="switchTab('research',this)">Research</button>
+    <button class="nav-tab" onclick="switchTab('datalog',this)">Data Log</button>
+    <button class="nav-tab" onclick="switchTab('connect',this)">Connect</button>
+    <button class="nav-tab" onclick="switchTab('code',this)">Arduino Code</button>
+  </div>
+  <div class="nav-status">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">DISCONNECTED</span>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-grid"></div>
+  <div style="position:relative;z-index:1">
+    <div class="hero-badge">PIEZOELECTRIC ENERGY MONITOR</div>
+    <h1>Real-Time<br><span>Piezo</span> Analytics</h1>
+    <p class="hero-sub">Arduino Uno · Analog A1 · 5 LED Bar Graph · Live voltage streaming via WebSocket</p>
+    <div class="hero-metrics">
+      <div class="hm"><div class="hm-val" id="hmVoltage">0.00</div><div class="hm-label">Volts (pin)</div></div>
+      <div class="hm"><div class="hm-val" id="hmPeak">0.00</div><div class="hm-label">Peak V</div></div>
+      <div class="hm"><div class="hm-val" id="hmTaps">0</div><div class="hm-label">Tap count</div></div>
+      <div class="hm"><div class="hm-val" id="hmEnergy">0.00</div><div class="hm-label">Est. μJ</div></div>
+      <div class="hm"><div class="hm-val" id="hmAvg">0.00</div><div class="hm-label">Avg V</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- PANELS -->
+<div class="panels">
+
+<!-- ===== LIVE ===== -->
+<div id="panel-live" class="panel active">
+  <div class="wave-full">
+    <div class="card-head">
+      <span class="card-title">Live voltage waveform</span>
+      <span class="card-badge" id="liveBadge2">OFFLINE</span>
+    </div>
+    <div class="wave-wrap"><canvas id="waveChart" role="img" aria-label="Live piezo voltage waveform">Live waveform</canvas></div>
+  </div>
+
+  <div class="live-grid">
+    <div class="live-chart-card">
+      <div class="card-head">
+        <span class="card-title">Voltage histogram (last 200 readings)</span>
+        <span class="card-badge badge-live" id="liveBadge">DEMO</span>
+      </div>
+      <div class="chart-wrap"><canvas id="histChart" role="img" aria-label="Voltage histogram">Histogram</canvas></div>
+    </div>
+    <div class="side-col">
+      <div class="stat-card">
+        <div class="stat-label">Current voltage</div>
+        <div class="stat-val green" id="liveVoltage">0.000<span class="stat-unit">V</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">ADC raw value</div>
+        <div class="stat-val blue" id="liveRaw">0<span class="stat-unit">/1023</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Peak voltage (session)</div>
+        <div class="stat-val orange" id="livePeak">0.000<span class="stat-unit">V</span></div>
+      </div>
+      <div class="led-card">
+        <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3)">LED bar (pins 2–6)</div>
+        <div class="led-row" id="ledBar">
+          <div class="led-col" id="lc1"><div class="led-bar" style="height:36px" id="lb1"></div><div class="led-dot" id="ld1"></div><div class="led-num">P2</div></div>
+          <div class="led-col" id="lc2"><div class="led-bar" style="height:36px" id="lb2"></div><div class="led-dot" id="ld2"></div><div class="led-num">P3</div></div>
+          <div class="led-col" id="lc3"><div class="led-bar" style="height:36px" id="lb3"></div><div class="led-dot" id="ld3"></div><div class="led-num">P4</div></div>
+          <div class="led-col" id="lc4"><div class="led-bar" style="height:36px" id="lb4"></div><div class="led-dot" id="ld4"></div><div class="led-num">P5</div></div>
+          <div class="led-col" id="lc5"><div class="led-bar" style="height:36px" id="lb5"></div><div class="led-dot" id="ld5"></div><div class="led-num">P6</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-grid">
+    <div class="mini-card">
+      <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Session stats</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px"><span style="color:var(--text3)">Total taps</span><span id="statTaps" style="color:var(--accent)">0</span></div>
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px"><span style="color:var(--text3)">Session time</span><span id="statTime" style="color:var(--accent2)">0:00</span></div>
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px"><span style="color:var(--text3)">Avg voltage</span><span id="statAvg" style="color:var(--text)">0.000V</span></div>
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px"><span style="color:var(--text3)">Est. total energy</span><span id="statEnergy" style="color:var(--accent3)">0.00 μJ</span></div>
+        <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px"><span style="color:var(--text3)">Readings/sec</span><span id="statRps" style="color:var(--text2)">0</span></div>
+      </div>
+    </div>
+    <div class="mini-card">
+      <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Voltage distribution</div>
+      <div style="position:relative;height:100px"><canvas id="distChart" role="img" aria-label="Voltage distribution">Distribution</canvas></div>
+    </div>
+    <div class="mini-card">
+      <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Quick actions</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="export-btn" style="width:100%" onclick="exportCSV()">Export CSV</button>
+        <button class="export-btn" style="width:100%" onclick="resetSession()">Reset session</button>
+        <button class="export-btn" style="width:100%" onclick="switchTab('connect',document.querySelector('.nav-tab:nth-child(5))'))">Connect Arduino</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SIMULATOR ===== -->
+<div id="panel-simulator" class="panel">
+  <div class="sim-wrap">
+    <div class="sim-controls">
+      <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:16px">Tap force simulator</div>
+      <div class="sim-row">
+        <span class="sim-label">Force</span>
+        <input type="range" class="sim-track" id="simForce" min="0" max="100" value="0" oninput="runSim()">
+        <span class="sim-val-disp" id="simForceVal">0%</span>
+      </div>
+      <div class="sim-bar-group">
+        <div class="sbg-label">Signal chain</div>
+        <div class="sbg-row"><span class="sbg-name">Raw V (est.)</span><div class="sbg-track"><div class="sbg-fill" id="sbRaw" style="width:0%;background:#378ADD"></div></div><span class="sbg-val" id="sbRawV" style="color:#378ADD">0.0V</span></div>
+        <div class="sbg-row"><span class="sbg-name">Pin V (0–5V)</span><div class="sbg-track"><div class="sbg-fill" id="sbPin" style="width:0%;background:#00ff88"></div></div><span class="sbg-val" id="sbPinV" style="color:#00ff88">0.000V</span></div>
+        <div class="sbg-row"><span class="sbg-name">ADC value</span><div class="sbg-track"><div class="sbg-fill" id="sbAdc" style="width:0%;background:#ff6b35"></div></div><span class="sbg-val" id="sbAdcV" style="color:#ff6b35">0</span></div>
+        <div class="sbg-row"><span class="sbg-name">Est. energy</span><div class="sbg-track"><div class="sbg-fill" id="sbEnergy" style="width:0%;background:#b16cff"></div></div><span class="sbg-val" id="sbEnergyV" style="color:#b16cff">0 μJ</span></div>
+      </div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px">LED bar graph (pins 2–6)</div>
+      <div class="sim-led-display">
+        <div class="sled" id="sled1">P2</div>
+        <div class="sled" id="sled2">P3</div>
+        <div class="sled" id="sled3">P4</div>
+        <div class="sled" id="sled4">P5</div>
+        <div class="sled" id="sled5">P6</div>
+      </div>
+      <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:4px">Threshold: each LED = ADC > (n×20)</div>
+      <button class="connect-btn" style="width:100%;margin-top:16px" onclick="simTap()">Simulate tap</button>
+    </div>
+    <div class="sim-output">
+      <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px">Simulated waveform output</div>
+      <div class="sim-chart-wrap"><canvas id="simChart" role="img" aria-label="Simulated voltage waveform">Sim waveform</canvas></div>
+      <div style="margin-top:16px">
+        <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px">How it works — signal flow</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.8">
+          <span style="color:var(--accent)">1.</span> Tap force creates mechanical stress on the PZT disc<br>
+          <span style="color:var(--accent2)">2.</span> Crystal lattice deformation separates charges → AC voltage spike (0–90V raw)<br>
+          <span style="color:var(--accent3)">3.</span> 1MΩ resistor loads the piezo, dropping voltage to Arduino-safe 0–5V<br>
+          <span style="color:var(--accent4)">4.</span> Arduino ADC samples at 10-bit resolution (0–1023)<br>
+          <span style="color:var(--accent)">5.</span> Each LED threshold: ADC value must exceed n×20 for LED n to turn on
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RESEARCH ===== -->
+<div id="panel-research" class="panel">
+  <div class="research-wrap">
+
+    <div class="r-section">
+      <h2>The <span>Piezoelectric</span> Effect</h2>
+      <div class="r-divider"></div>
+      <p class="r-text">
+        Piezoelectricity is the ability of certain crystalline materials — most commonly <strong>lead zirconate titanate (PZT)</strong>, quartz, and PVDF polymer — to generate an electric charge in response to applied mechanical stress. The effect is fully reversible: applying a voltage causes the material to deform.
+      </p>
+      <p class="r-text">
+        In your circuit, the disc (likely a 27mm buzzer disc made of brass + PZT ceramic) acts as a <strong>transducer</strong>. When you press or tap it, the PZT layer bends, separating the internal dipoles. One face becomes net positive, the other net negative — producing a measurable voltage across the leads.
+      </p>
+      <div class="r-grid">
+        <div class="r-stat"><div class="r-stat-val">1–90V</div><div class="r-stat-label">Raw AC output</div><div class="r-stat-sub">Unloaded, single disc</div></div>
+        <div class="r-stat"><div class="r-stat-val">nA–μA</div><div class="r-stat-label">Current output</div><div class="r-stat-sub">Very low impedance source</div></div>
+        <div class="r-stat"><div class="r-stat-val">1.1 V/g</div><div class="r-stat-label">Voltage sensitivity</div><div class="r-stat-sub">At baseline, open circuit</div></div>
+        <div class="r-stat"><div class="r-stat-val">260 pC/g</div><div class="r-stat-label">Charge sensitivity</div><div class="r-stat-sub">Baseline measurement</div></div>
+        <div class="r-stat"><div class="r-stat-val">75 Hz</div><div class="r-stat-label">Resonance frequency</div><div class="r-stat-sub">Peak output here</div></div>
+        <div class="r-stat"><div class="r-stat-val">42 Hz</div><div class="r-stat-label">Upper –3dB limit</div><div class="r-stat-sub">Flat response below this</div></div>
+      </div>
+    </div>
+
+    <div class="r-section">
+      <h2>Your <span>Circuit</span> Explained</h2>
+      <div class="r-divider"></div>
+      <p class="r-text">Your circuit connects a standard 27mm piezo disc to <strong>pin A1</strong> of an Arduino Uno, with five LEDs on digital pins 2–6. The code implements a voltage-controlled bar graph (VU meter).</p>
+      <div class="formula-box">
+        Voltage at Arduino pin:<br>
+        V_pin = (analogRead(A1) / 1023.0) × 5.0<br><br>
+        For raw piezo voltage estimation (with 1MΩ load):<br>
+        V_est ≈ V_pin × (1,000,000 + R_load) / R_load<br><br>
+        Energy per tap estimate:<br>
+        E = ½ × C × V²   (C ≈ 10–20nF for a 27mm disc)
+      </div>
+      <p class="r-text">
+        <strong>Critical safety note:</strong> Piezo discs can spike to ±50V or more. The 1MΩ resistor in parallel "loads" the sensor, clamping the voltage seen by the Arduino ADC pin to safe levels. Without it, you risk permanently damaging the ADC input.
+      </p>
+      <div style="margin-top:16px">
+        <span class="tag tag-green">PZT disc</span>
+        <span class="tag tag-blue">Arduino Uno</span>
+        <span class="tag tag-orange">1MΩ resistor</span>
+        <span class="tag tag-green">5x LEDs</span>
+        <span class="tag tag-blue">220Ω resistors</span>
+        <span class="tag tag-purple">Breadboard</span>
+      </div>
+    </div>
+
+    <div class="r-section">
+      <h2>Electricity <span>Generation</span> Potential</h2>
+      <div class="r-divider"></div>
+      <p class="r-text">
+        A single 27mm PZT disc generates extremely <strong>low power</strong> — in the microwatt range per tap. The output is inherently <strong>AC</strong> (spikes positive on press, negative on release). To actually store this energy, you need a <strong>bridge rectifier</strong> followed by a capacitor or small rechargeable battery.
+      </p>
+      <div class="r-grid">
+        <div class="r-stat"><div class="r-stat-val">~1–100 μJ</div><div class="r-stat-label">Energy per tap</div><div class="r-stat-sub">Depends on force + disc size</div></div>
+        <div class="r-stat"><div class="r-stat-val">~1–100 μW</div><div class="r-stat-label">Average power</div><div class="r-stat-sub">At 1 tap/second rate</div></div>
+        <div class="r-stat"><div class="r-stat-val">72 discs</div><div class="r-stat-label">Real-world floor tile</div><div class="r-stat-sub">To power a street LED</div></div>
+        <div class="r-stat"><div class="r-stat-val">4V battery</div><div class="r-stat-label">Charge target</div><div class="r-stat-sub">After rectifier + boost</div></div>
+      </div>
+      <p class="r-text">
+        To upgrade your project for actual energy harvesting: connect the piezo through a <strong>bridge rectifier</strong> (4× 1N4148 diodes) → a 100μF capacitor → a 4V NiMH battery. A DC-DC boost converter can then step up the stored 4V to useful voltages.
+      </p>
+    </div>
+
+    <div class="r-section">
+      <h2>Real-World <span>Applications</span></h2>
+      <div class="r-divider"></div>
+      <div class="app-grid">
+        <div class="app-card"><div class="app-icon">🚶</div><div class="app-name">Smart flooring</div><div class="app-desc">Footstep energy harvesting in malls, stations, airports</div></div>
+        <div class="app-card"><div class="app-icon">🎵</div><div class="app-name">Microphones</div><div class="app-desc">Sound pressure → electrical signal conversion</div></div>
+        <div class="app-card"><div class="app-icon">🏗️</div><div class="app-name">Structural health</div><div class="app-desc">Vibration monitoring in bridges and buildings</div></div>
+        <div class="app-card"><div class="app-icon">⌚</div><div class="app-name">Wearables</div><div class="app-desc">Harvest body movement to power low-energy sensors</div></div>
+        <div class="app-card"><div class="app-icon">🚗</div><div class="app-name">Automotive</div><div class="app-desc">Knock sensors in engines, tire pressure monitoring</div></div>
+        <div class="app-card"><div class="app-icon">💊</div><div class="app-name">Medical</div><div class="app-desc">Ultrasound transducers, implantable energy harvesters</div></div>
+      </div>
+    </div>
+
+    <div class="r-section">
+      <h2>How to <span>Improve</span> Your Project</h2>
+      <div class="r-divider"></div>
+      <p class="r-text"><strong>Short term (your current setup):</strong> Upload the improved Arduino code from the Code tab. Open Serial Plotter in Arduino IDE to see a real voltage graph instantly.</p>
+      <p class="r-text"><strong>Medium term (energy harvesting):</strong> Add a bridge rectifier (4× 1N4148 diodes in a diamond) to convert AC spikes to DC. Add a 100μF capacitor to smooth the output. Now you can actually light an LED directly from the piezo.</p>
+      <p class="r-text"><strong>Advanced (full system):</strong> Multiple piezo discs in parallel improve current. Use this dashboard (connected via the backend) to log voltage over time, measure peak energy, count taps, and visualize everything in real time.</p>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===== DATA LOG ===== -->
+<div id="panel-datalog" class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3)">Session log — <span id="logCount" style="color:var(--accent)">0</span> readings</div>
+    <div>
+      <button class="export-btn" onclick="exportCSV()">Export CSV</button>
+      <button class="export-btn" onclick="clearLog()">Clear log</button>
+    </div>
+  </div>
+  <div class="log-wrap">
+    <table class="data-table">
+      <thead><tr><th>#</th><th>Timestamp</th><th>Raw ADC</th><th>Voltage (V)</th><th>LEDs on</th><th>Energy (μJ)</th></tr></thead>
+      <tbody id="dataTableBody"></tbody>
+    </table>
+  </div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:16px">
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Session summary</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px">
+      <div><div style="font-size:10px;color:var(--text3)">Max voltage</div><div style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)" id="sumMax">0.000V</div></div>
+      <div><div style="font-size:10px;color:var(--text3)">Min voltage</div><div style="font-family:var(--mono);font-size:1.1rem;color:var(--text2)" id="sumMin">0.000V</div></div>
+      <div><div style="font-size:10px;color:var(--text3)">Mean voltage</div><div style="font-family:var(--mono);font-size:1.1rem;color:var(--accent2)" id="sumMean">0.000V</div></div>
+      <div><div style="font-size:10px;color:var(--text3)">Total readings</div><div style="font-family:var(--mono);font-size:1.1rem;color:var(--text)" id="sumCount">0</div></div>
+      <div><div style="font-size:10px;color:var(--text3)">Total energy</div><div style="font-family:var(--mono);font-size:1.1rem;color:var(--accent3)" id="sumEnergy">0.00 μJ</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CONNECT ===== -->
+<div id="panel-connect" class="panel">
+  <div class="connect-wrap">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:24px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Connection status</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="status-dot" id="connDot"></div>
+        <span style="font-family:var(--mono);font-size:14px" id="connStatus">Not connected to backend</span>
+      </div>
+      <div style="margin-top:16px;font-size:13px;color:var(--text2)">
+        This dashboard connects to a local Node.js server running on your machine. The server reads the Arduino's serial output and streams it here via WebSocket in real time.
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="connect-btn" onclick="tryConnect()">Connect to backend</button>
+        <button class="disconnect-btn" onclick="doDisconnect()">Disconnect</button>
+      </div>
+      <div class="log-box" id="connLog"></div>
+    </div>
+
+    <div class="connect-step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h3>Install Node.js</h3>
+        <p>Download and install Node.js from <code>nodejs.org</code>. This gives you <code>node</code> and <code>npm</code>. Verify with <code>node --version</code> in your terminal.</p>
+      </div>
+    </div>
+
+    <div class="connect-step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h3>Set up the backend server</h3>
+        <p>Create a folder, place <code>server.js</code> inside it (download from the Code tab), then run:</p>
+        <pre class="code-block"><span class="kw">npm</span> install express socket.io serialport
+<span class="kw">node</span> server.js</pre>
+      </div>
+    </div>
+
+    <div class="connect-step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h3>Upload Arduino code</h3>
+        <p>Go to the <strong>Code</strong> tab, copy the improved Arduino sketch, paste it into Arduino IDE, select your board and port (e.g. <code>COM3</code> on Windows, <code>/dev/ttyUSB0</code> on Linux), and upload. The serial output format must be <code>RAW:xxx,VOLTS:y.yyy</code>.</p>
+      </div>
+    </div>
+
+    <div class="connect-step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h3>Open this dashboard</h3>
+        <p>Once the server is running, click <strong>Connect to backend</strong> above. It will connect to <code>http://localhost:3001</code> via WebSocket. All tabs will start receiving live data from your Arduino automatically.</p>
+      </div>
+    </div>
+
+    <div class="connect-step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h3>Tap your piezo!</h3>
+        <p>With everything connected, press or tap the piezo disc. The Live tab will show voltage spikes in real time, the LED bar will animate, and readings will be logged in the Data Log tab.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CODE ===== -->
+<div id="panel-code" class="panel">
+  <div class="arduino-code">
+    <div class="card-head">
+      <span class="card-title">Arduino sketch — upload this to your Uno</span>
+      <button class="copy-btn" onclick="copyCode('arduinoCode','copyBtn1')" id="copyBtn1">Copy</button>
+    </div>
+    <pre class="code-block" id="arduinoCode"><span class="cm">/*
+  PiezoLab — Arduino Uno sketch
+  Reads piezo on A1, outputs voltage + raw ADC to Serial.
+  Controls 5 LEDs on pins 2–6 as a VU bar graph.
+  Serial format: RAW:xxx,VOLTS:y.yyy
+  Baud rate: 9600
+*/</span>
+
+<span class="kw">const int</span> <span class="fn">PIEZO_PIN</span> = A1;
+<span class="kw">const float</span> <span class="fn">VREF</span> = 5.0;
+<span class="kw">const int</span> <span class="fn">ADC_MAX</span> = 1023;
+<span class="kw">const int</span> <span class="fn">NUM_LEDS</span> = 5;
+<span class="kw">int</span> ledPins[NUM_LEDS] = {2, 3, 4, 5, 6};
+
+<span class="kw">int</span> peakRaw = 0;
+<span class="kw">unsigned long</span> peakTimer = 0;
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  Serial.<span class="fn">begin</span>(9600);
+  <span class="kw">for</span> (<span class="kw">int</span> i = 0; i < NUM_LEDS; i++) {
+    <span class="fn">pinMode</span>(ledPins[i], OUTPUT);
+  }
+  Serial.<span class="fn">println</span>(<span class="str">"PIEZOLAB_READY"</span>);
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="kw">int</span> raw = <span class="fn">analogRead</span>(PIEZO_PIN);
+  <span class="kw">float</span> voltage = (raw / (<span class="kw">float</span>)ADC_MAX) * VREF;
+
+  <span class="cm">// Track peak (hold for 1 second)</span>
+  <span class="kw">if</span> (raw > peakRaw) {
+    peakRaw = raw;
+    peakTimer = <span class="fn">millis</span>();
+  }
+  <span class="kw">if</span> (<span class="fn">millis</span>() - peakTimer > 1000) {
+    peakRaw = 0;
+  }
+
+  <span class="cm">// Serial output — parsed by Node.js backend</span>
+  Serial.<span class="fn">print</span>(<span class="str">"RAW:"</span>); Serial.<span class="fn">print</span>(raw);
+  Serial.<span class="fn">print</span>(<span class="str">",VOLTS:"</span>); Serial.<span class="fn">print</span>(voltage, 3);
+  Serial.<span class="fn">print</span>(<span class="str">",PEAK:"</span>); Serial.<span class="fn">println</span>(peakRaw);
+
+  <span class="cm">// LED bar graph</span>
+  <span class="kw">for</span> (<span class="kw">int</span> i = 0; i < NUM_LEDS; i++) {
+    <span class="fn">digitalWrite</span>(ledPins[i], raw > (i + 1) * 20 ? HIGH : LOW);
+  }
+
+  <span class="fn">delay</span>(50); <span class="cm">// 20 readings/sec</span>
+}</pre>
+  </div>
+
+  <div class="arduino-code">
+    <div class="card-head">
+      <span class="card-title">Node.js backend server — <code>server.js</code></span>
+      <button class="copy-btn" onclick="copyCode('nodeCode','copyBtn2')" id="copyBtn2">Copy</button>
+    </div>
+    <pre class="code-block" id="nodeCode"><span class="cm">// PiezoLab — Node.js backend server
+// Run: npm install express socket.io serialport
+// Then: node server.js
+// Opens on http://localhost:3001</span>
+
+<span class="kw">const</span> express = <span class="fn">require</span>(<span class="str">'express'</span>);
+<span class="kw">const</span> http = <span class="fn">require</span>(<span class="str">'http'</span>);
+<span class="kw">const</span> { Server } = <span class="fn">require</span>(<span class="str">'socket.io'</span>);
+<span class="kw">const</span> { SerialPort } = <span class="fn">require</span>(<span class="str">'serialport'</span>);
+<span class="kw">const</span> { ReadlineParser } = <span class="fn">require</span>(<span class="str">'@serialport/parser-readline'</span>);
+<span class="kw">const</span> path = <span class="fn">require</span>(<span class="str">'path'</span>);
+<span class="kw">const</span> fs = <span class="fn">require</span>(<span class="str">'fs'</span>);
+
+<span class="kw">const</span> app = <span class="fn">express</span>();
+<span class="kw">const</span> server = http.<span class="fn">createServer</span>(app);
+<span class="kw">const</span> io = <span class="kw">new</span> <span class="fn">Server</span>(server, {
+  cors: { origin: <span class="str">"*"</span> }
+});
+
+<span class="cm">// Serve the dashboard HTML</span>
+app.<span class="fn">get</span>(<span class="str">'/'</span>, (req, res) => {
+  res.<span class="fn">sendFile</span>(path.<span class="fn">join</span>(__dirname, <span class="str">'index.html'</span>));
+});
+
+<span class="cm">// ── Auto-detect Arduino serial port ──</span>
+<span class="kw">async function</span> <span class="fn">findArduinoPort</span>() {
+  <span class="kw">const</span> ports = <span class="kw">await</span> SerialPort.<span class="fn">list</span>();
+  <span class="kw">const</span> arduino = ports.<span class="fn">find</span>(p =>
+    p.manufacturer?.toLowerCase().<span class="fn">includes</span>(<span class="str">'arduino'</span>) ||
+    p.manufacturer?.toLowerCase().<span class="fn">includes</span>(<span class="str">'wch'</span>) ||
+    p.manufacturer?.toLowerCase().<span class="fn">includes</span>(<span class="str">'ch340'</span>) ||
+    p.pnpId?.toLowerCase().<span class="fn">includes</span>(<span class="str">'arduino'</span>)
+  );
+  <span class="kw">return</span> arduino ? arduino.path : ports[0]?.path;
+}
+
+<span class="kw">let</span> serialPort = null;
+<span class="kw">let</span> logStream = null;
+<span class="kw">let</span> tapCount = 0;
+<span class="kw">let</span> lastRaw = 0;
+
+<span class="cm">// Open CSV log file</span>
+<span class="fn">setupLog</span>();
+<span class="kw">function</span> <span class="fn">setupLog</span>() {
+  <span class="kw">const</span> fname = <span class="str">`piezo_log_${new Date().toISOString().slice(0,10)}.csv`</span>;
+  logStream = fs.<span class="fn">createWriteStream</span>(fname, { flags: <span class="str">'a'</span> });
+  logStream.<span class="fn">write</span>(<span class="str">'timestamp,raw,voltage,peak,taps\n'</span>);
+  console.<span class="fn">log</span>(<span class="str">`Logging to ${fname}`</span>);
+}
+
+<span class="cm">// Connect to Arduino</span>
+<span class="kw">async function</span> <span class="fn">connectArduino</span>() {
+  <span class="kw">const</span> portPath = <span class="kw">await</span> <span class="fn">findArduinoPort</span>();
+  <span class="kw">if</span> (!portPath) {
+    console.<span class="fn">log</span>(<span class="str">'No serial port found. Running in demo mode.'</span>);
+    <span class="fn">startDemoMode</span>();
+    <span class="kw">return</span>;
+  }
+  console.<span class="fn">log</span>(<span class="str">`Connecting to ${portPath}...`</span>);
+  serialPort = <span class="kw">new</span> <span class="fn">SerialPort</span>({ path: portPath, baudRate: 9600 });
+  <span class="kw">const</span> parser = serialPort.<span class="fn">pipe</span>(<span class="kw">new</span> <span class="fn">ReadlineParser</span>({ delimiter: <span class="str">'\n'</span> }));
+
+  parser.<span class="fn">on</span>(<span class="str">'data'</span>, (line) => {
+    <span class="kw">if</span> (!line.<span class="fn">includes</span>(<span class="str">'RAW:'</span>)) <span class="kw">return</span>;
+    <span class="kw">const</span> raw = <span class="fn">parseInt</span>(line.<span class="fn">match</span>(/RAW:(\d+)/)?.[1] || 0);
+    <span class="kw">const</span> volts = <span class="fn">parseFloat</span>(line.<span class="fn">match</span>(/VOLTS:([\d.]+)/)?.[1] || 0);
+    <span class="kw">const</span> peak = <span class="fn">parseInt</span>(line.<span class="fn">match</span>(/PEAK:(\d+)/)?.[1] || 0);
+    <span class="kw">if</span> (raw > 30 && lastRaw <= 30) tapCount++;
+    lastRaw = raw;
+    <span class="kw">const</span> data = { raw, volts, peak, taps: tapCount, ts: Date.<span class="fn">now</span>() };
+    io.<span class="fn">emit</span>(<span class="str">'piezo'</span>, data);
+    logStream.<span class="fn">write</span>(<span class="str">`${new Date().toISOString()},${raw},${volts},${peak},${tapCount}\n`</span>);
+  });
+  serialPort.<span class="fn">on</span>(<span class="str">'open'</span>, () => { console.<span class="fn">log</span>(<span class="str">'Arduino connected!'</span>); io.<span class="fn">emit</span>(<span class="str">'status'</span>, <span class="str">'connected'</span>); });
+  serialPort.<span class="fn">on</span>(<span class="str">'error'</span>, (e) => { console.<span class="fn">log</span>(<span class="str">'Serial error:'</span>, e.message); <span class="fn">startDemoMode</span>(); });
+}
+
+<span class="cm">// Demo mode — generates fake data when no Arduino</span>
+<span class="kw">function</span> <span class="fn">startDemoMode</span>() {
+  io.<span class="fn">emit</span>(<span class="str">'status'</span>, <span class="str">'demo'</span>);
+  <span class="fn">setInterval</span>(() => {
+    <span class="kw">const</span> raw = Math.<span class="fn">random</span>() < 0.05 ? Math.<span class="fn">floor</span>(Math.<span class="fn">random</span>() * 900) : Math.<span class="fn">floor</span>(Math.<span class="fn">random</span>() * 40);
+    <span class="kw">const</span> volts = (raw / 1023) * 5;
+    <span class="kw">if</span> (raw > 30 && lastRaw <= 30) tapCount++;
+    lastRaw = raw;
+    io.<span class="fn">emit</span>(<span class="str">'piezo'</span>, { raw, volts, peak: raw, taps: tapCount, ts: Date.<span class="fn">now</span>() });
+  }, 50);
+}
+
+io.<span class="fn">on</span>(<span class="str">'connection'</span>, (socket) => {
+  console.<span class="fn">log</span>(<span class="str">'Dashboard connected'</span>);
+  socket.<span class="fn">emit</span>(<span class="str">'status'</span>, serialPort?.isOpen ? <span class="str">'connected'</span> : <span class="str">'demo'</span>);
+});
+
+server.<span class="fn">listen</span>(3001, () => {
+  console.<span class="fn">log</span>(<span class="str">'PiezoLab server running at http://localhost:3001'</span>);
+  <span class="fn">connectArduino</span>();
+});</pre>
+  </div>
+
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px">
+    <div class="card-title" style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Quick start commands</div>
+    <pre class="code-block"><span class="cm"># 1. Create project folder and install dependencies</span>
+<span class="kw">mkdir</span> piezolab && <span class="kw">cd</span> piezolab
+<span class="kw">npm</span> init -y
+<span class="kw">npm</span> install express socket.io serialport @serialport/parser-readline
+
+<span class="cm"># 2. Place index.html and server.js in this folder, then:</span>
+<span class="kw">node</span> server.js
+
+<span class="cm"># 3. Open browser and navigate to:</span>
+<span class="str">http://localhost:3001</span></pre>
+  </div>
+</div>
+
+</div><!-- end panels -->
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let socket = null;
+let connected = false;
+let readings = [];
+let sessionStart = Date.now();
+let tapCount = 0;
+let peakVoltage = 0;
+let totalEnergy = 0;
+let voltageSum = 0;
+let readingCount = 0;
+let rpsCounter = 0;
+let lastRpsTime = Date.now();
+
+// waveform buffer
+const WAVE_LEN = 120;
+let waveData = Array(WAVE_LEN).fill(0);
+
+// ============================================================
+// CHARTS SETUP
+// ============================================================
+const chartOpts = {
+  responsive: true, maintainAspectRatio: false,
+  animation: { duration: 0 },
+  plugins: { legend: { display: false } }
+};
+
+// Wave chart
+const waveCtx = document.getElementById('waveChart').getContext('2d');
+const waveChart = new Chart(waveCtx, {
+  type: 'line',
+  data: {
+    labels: Array.from({length: WAVE_LEN}, (_,i) => i),
+    datasets: [{
+      data: [...waveData],
+      borderColor: '#00ff88', borderWidth: 1.5,
+      pointRadius: 0, tension: 0.3, fill: true,
+      backgroundColor: 'rgba(0,255,136,0.05)'
+    }]
+  },
+  options: { ...chartOpts, scales: {
+    x: { display: false },
+    y: { min: 0, max: 5.5, grid: { color: 'rgba(255,255,255,0.04)' },
+         ticks: { color: '#555570', font: { size: 10, family: 'Space Mono' }, callback: v => v.toFixed(1)+'V' } }
+  }}
+});
+
+// Histogram
+const histCtx = document.getElementById('histChart').getContext('2d');
+const histChart = new Chart(histCtx, {
+  type: 'bar',
+  data: {
+    labels: Array.from({length: 20}, (_,i) => (i*5.12/20).toFixed(2)),
+    datasets: [{ data: Array(20).fill(0), backgroundColor: 'rgba(0,153,255,0.6)', borderColor: 'rgba(0,153,255,0.9)', borderWidth: 1 }]
+  },
+  options: { ...chartOpts, scales: {
+    x: { ticks: { color: '#555570', font: { size: 9 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+    y: { ticks: { color: '#555570', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } }
+  }}
+});
+
+// Distribution chart
+const distCtx = document.getElementById('distChart').getContext('2d');
+const distChart = new Chart(distCtx, {
+  type: 'line',
+  data: {
+    labels: ['0','1V','2V','3V','4V','5V'],
+    datasets: [{ data: [0,0,0,0,0,0], borderColor: '#b16cff', fill: true, backgroundColor: 'rgba(177,108,255,0.1)', tension: 0.4, pointRadius: 0, borderWidth: 1 }]
+  },
+  options: { ...chartOpts, scales: {
+    x: { ticks: { color: '#555570', font: { size: 9 } }, grid: { display: false } },
+    y: { display: false }
+  }}
+});
+
+// Simulator chart
+const simCtx = document.getElementById('simChart').getContext('2d');
+let simData = Array(60).fill(0);
+const simChart = new Chart(simCtx, {
+  type: 'line',
+  data: {
+    labels: Array.from({length:60},(_,i)=>i),
+    datasets: [{ data: [...simData], borderColor: '#00ff88', borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: true, backgroundColor: 'rgba(0,255,136,0.05)' }]
+  },
+  options: { ...chartOpts, scales: {
+    x: { display: false },
+    y: { min: -0.5, max: 5.5, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#555570', font: { size: 9 } } }
+  }}
+});
+
+// ============================================================
+// PROCESS INCOMING DATA
+// ============================================================
+function processData(d) {
+  const v = parseFloat(d.volts) || 0;
+  const raw = parseInt(d.raw) || 0;
+
+  // Update waveform
+  waveData.push(parseFloat(v.toFixed(3)));
+  waveData.shift();
+  waveChart.data.datasets[0].data = [...waveData];
+  waveChart.update();
+
+  // Stats
+  readingCount++;
+  voltageSum += v;
+  rpsCounter++;
+  if (v > peakVoltage) peakVoltage = v;
+  const energy = 0.5 * 15e-9 * v * v * 1e6; // μJ, C≈15nF
+  totalEnergy += energy;
+
+  // Tap detection
+  if (d.taps !== undefined) tapCount = d.taps;
+
+  // Update UI
+  document.getElementById('liveVoltage').innerHTML = v.toFixed(3) + '<span class="stat-unit">V</span>';
+  document.getElementById('liveRaw').innerHTML = raw + '<span class="stat-unit">/1023</span>';
+  document.getElementById('livePeak').innerHTML = peakVoltage.toFixed(3) + '<span class="stat-unit">V</span>';
+  document.getElementById('hmVoltage').textContent = v.toFixed(2);
+  document.getElementById('hmPeak').textContent = peakVoltage.toFixed(2);
+  document.getElementById('hmTaps').textContent = tapCount;
+  document.getElementById('hmEnergy').textContent = totalEnergy.toFixed(2);
+  document.getElementById('hmAvg').textContent = readingCount > 0 ? (voltageSum/readingCount).toFixed(2) : '0.00';
+
+  // Session stats
+  document.getElementById('statTaps').textContent = tapCount;
+  const elapsed = Math.floor((Date.now() - sessionStart)/1000);
+  document.getElementById('statTime').textContent = Math.floor(elapsed/60)+':'+(elapsed%60).toString().padStart(2,'0');
+  document.getElementById('statAvg').textContent = (voltageSum/Math.max(readingCount,1)).toFixed(3)+'V';
+  document.getElementById('statEnergy').textContent = totalEnergy.toFixed(2)+' μJ';
+
+  // RPS
+  if (Date.now() - lastRpsTime > 1000) {
+    document.getElementById('statRps').textContent = rpsCounter;
+    rpsCounter = 0; lastRpsTime = Date.now();
+  }
+
+  // LEDs
+  for (let i = 1; i <= 5; i++) {
+    const on = raw > i * 20;
+    const col = document.getElementById('lc'+i);
+    if (on) col.classList.add('on'); else col.classList.remove('on');
+    const h = Math.max(8, Math.min(44, Math.floor((raw/(i*20))*36)));
+    document.getElementById('lb'+i).style.height = (on ? Math.min(44, h) : 8)+'px';
+  }
+
+  // Histogram
+  const bin = Math.min(19, Math.floor(raw / (1023/20)));
+  histChart.data.datasets[0].data[bin]++;
+  histChart.update();
+
+  // Data log
+  readings.unshift({ ts: new Date().toISOString(), raw, v, energy });
+  if (readings.length > 500) readings.pop();
+  updateDataTable();
+  updateSummary();
+}
+
+function updateLEDs(raw) {
+  for (let i = 1; i <= 5; i++) {
+    const on = raw > i * 20;
+    const col = document.getElementById('lc'+i);
+    if(on) col.classList.add('on'); else col.classList.remove('on');
+  }
+}
+
+function updateDataTable() {
+  const tbody = document.getElementById('dataTableBody');
+  const rows = readings.slice(0, 50).map((r, i) =>
+    `<tr><td>${readings.length - i}</td><td>${r.ts.slice(11,23)}</td><td>${r.raw}</td><td class="hi">${r.v.toFixed(3)}</td><td>${Math.min(5,Math.floor(r.raw/20))}</td><td>${r.energy.toFixed(4)}</td></tr>`
+  ).join('');
+  tbody.innerHTML = rows;
+  document.getElementById('logCount').textContent = readings.length;
+}
+
+function updateSummary() {
+  if (!readings.length) return;
+  const vs = readings.map(r => r.v);
+  document.getElementById('sumMax').textContent = Math.max(...vs).toFixed(3)+'V';
+  document.getElementById('sumMin').textContent = Math.min(...vs).toFixed(3)+'V';
+  document.getElementById('sumMean').textContent = (vs.reduce((a,b)=>a+b,0)/vs.length).toFixed(3)+'V';
+  document.getElementById('sumCount').textContent = readings.length;
+  document.getElementById('sumEnergy').textContent = totalEnergy.toFixed(2)+' μJ';
+}
+
+// ============================================================
+// SOCKET CONNECTION
+// ============================================================
+function tryConnect() {
+  addLog('Connecting to backend at localhost:3001...', false);
+  try {
+    socket = io('http://localhost:3001', { timeout: 3000 });
+    socket.on('connect', () => {
+      connected = true;
+      setStatus(true);
+      addLog('Connected! Waiting for Arduino data...', false);
+    });
+    socket.on('disconnect', () => {
+      connected = false;
+      setStatus(false);
+      addLog('Disconnected from backend.', true);
+    });
+    socket.on('piezo', processData);
+    socket.on('status', (s) => {
+      addLog('Server status: ' + s, false);
+      document.getElementById('liveBadge').textContent = s === 'connected' ? 'LIVE' : 'DEMO';
+      document.getElementById('liveBadge').className = 'card-badge ' + (s === 'connected' ? 'badge-live' : 'badge-off');
+      document.getElementById('liveBadge2').textContent = s === 'connected' ? 'LIVE FEED' : 'DEMO MODE';
+    });
+    socket.on('connect_error', () => {
+      addLog('Cannot reach backend. Is server.js running? (node server.js)', true);
+    });
+  } catch(e) {
+    addLog('Socket.io not available. Open via http://localhost:3001', true);
+  }
+}
+
+function doDisconnect() {
+  if (socket) { socket.disconnect(); socket = null; }
+  connected = false; setStatus(false);
+  addLog('Manually disconnected.', false);
+}
+
+function setStatus(live) {
+  document.querySelectorAll('.status-dot').forEach(d => {
+    if(live) d.classList.add('live'); else d.classList.remove('live');
+  });
+  document.getElementById('statusText').textContent = live ? 'LIVE' : 'DISCONNECTED';
+  document.getElementById('connStatus').textContent = live ? 'Connected to backend (localhost:3001)' : 'Not connected';
+  document.getElementById('connDot').className = 'status-dot' + (live ? ' live' : '');
+}
+
+function addLog(msg, err) {
+  const box = document.getElementById('connLog');
+  const ts = new Date().toLocaleTimeString();
+  const line = document.createElement('span');
+  line.className = 'log-line' + (err ? ' err' : '');
+  line.innerHTML = `<span class="ts">[${ts}]</span> <span class="msg">${msg}</span>`;
+  box.appendChild(line);
+  box.appendChild(document.createElement('br'));
+  box.scrollTop = box.scrollHeight;
+}
+
+// ============================================================
+// SIMULATOR
+// ============================================================
+let simTapDecay = null;
+function runSim() {
+  const f = parseInt(document.getElementById('simForce').value);
+  document.getElementById('simForceVal').textContent = f + '%';
+  const rawV = (f/100)*45;
+  const pinV = Math.min((f/100)*5, 5);
+  const adc = Math.round((pinV/5)*1023);
+  const ener = (0.5 * 15e-9 * pinV * pinV * 1e6).toFixed(3);
+  document.getElementById('sbRaw').style.width = (rawV/45*100)+'%';
+  document.getElementById('sbPin').style.width = (pinV/5*100)+'%';
+  document.getElementById('sbAdc').style.width = (adc/1023*100)+'%';
+  document.getElementById('sbEnergy').style.width = Math.min(100, parseFloat(ener)*10)+'%';
+  document.getElementById('sbRawV').textContent = rawV.toFixed(1)+'V';
+  document.getElementById('sbPinV').textContent = pinV.toFixed(3)+'V';
+  document.getElementById('sbAdcV').textContent = adc;
+  document.getElementById('sbEnergyV').textContent = ener+' μJ';
+  for (let i = 1; i <= 5; i++) {
+    const sl = document.getElementById('sled'+i);
+    if (adc > i*20) sl.classList.add('on'); else sl.classList.remove('on');
+  }
+  simData.push(pinV); simData.shift();
+  simChart.data.datasets[0].data = [...simData];
+  simChart.update();
+}
+
+function simTap() {
+  const peak = Math.random()*0.8+0.2;
+  let t = 0;
+  if (simTapDecay) clearInterval(simTapDecay);
+  simTapDecay = setInterval(() => {
+    const v = peak * Math.exp(-t*3) * Math.abs(Math.cos(t*8));
+    const sl = document.getElementById('simForce');
+    sl.value = Math.round(v*100);
+    runSim();
+    t += 0.05;
+    if (t > 1.5) { sl.value = 0; runSim(); clearInterval(simTapDecay); }
+  }, 50);
+}
+
+// ============================================================
+// TAB SWITCHING
+// ============================================================
+function switchTab(name, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  if (btn) btn.classList.add('active');
+  else {
+    const tabs = document.querySelectorAll('.nav-tab');
+    const names = ['live','simulator','research','datalog','connect','code'];
+    const idx = names.indexOf(name);
+    if (idx >= 0) tabs[idx].classList.add('active');
+  }
+}
+
+// ============================================================
+// EXPORT / RESET
+// ============================================================
+function exportCSV() {
+  const rows = ['#,timestamp,raw,voltage,energy_uJ'];
+  readings.forEach((r,i) => rows.push(`${i+1},${r.ts},${r.raw},${r.v.toFixed(4)},${r.energy.toFixed(6)}`));
+  const blob = new Blob([rows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'piezo_session_'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.csv';
+  a.click();
+}
+
+function clearLog() { readings = []; document.getElementById('dataTableBody').innerHTML = ''; document.getElementById('logCount').textContent = '0'; }
+
+function resetSession() {
+  peakVoltage = 0; totalEnergy = 0; voltageSum = 0; readingCount = 0; tapCount = 0;
+  waveData = Array(WAVE_LEN).fill(0);
+  waveChart.data.datasets[0].data = [...waveData]; waveChart.update();
+  histChart.data.datasets[0].data = Array(20).fill(0); histChart.update();
+  readings = []; sessionStart = Date.now();
+  document.getElementById('hmVoltage').textContent = '0.00';
+  document.getElementById('hmPeak').textContent = '0.00';
+  document.getElementById('hmTaps').textContent = '0';
+  document.getElementById('hmEnergy').textContent = '0.00';
+  document.getElementById('statTaps').textContent = '0';
+  clearLog();
+}
+
+// ============================================================
+// COPY CODE BUTTONS
+// ============================================================
+function copyCode(id, btnId) {
+  const el = document.getElementById(id);
+  const text = el.innerText || el.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById(btnId);
+    btn.textContent = 'Copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+// ============================================================
+// INIT — try auto-connect, run sim once
+// ============================================================
+runSim();
+addLog('Dashboard loaded. Click "Connect to backend" to start live mode.', false);
+
+// Auto-try WebSocket connection (won't break if server not running)
+setTimeout(() => {
+  try { tryConnect(); } catch(e) {}
+}, 500);
+</script>
+</body>
+</html>
